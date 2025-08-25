@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bandwidth Orchestrator</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .container { display: flex; flex-wrap: wrap; }
+        .panel { border: 1px solid #ddd; padding: 20px; margin: 10px; border-radius: 5px; }
+        .chart-container { width: 600px; height: 300px; }
+        .controls { min-width: 300px; }
+        .control-group { margin: 10px 0; }
+        button { padding: 8px 16px; cursor: pointer; }
+        pre { background: #f5f5f5; padding: 10px; }
+    </style>
+</head>
+<body>
+    <h1>Bandwidth Orchestrator Dashboard</h1>
+    
+    <div class="container">
+        <div class="panel">
+            <h2>Allocation vs Demand</h2>
+            <div class="chart-container">
+                <canvas id="allocationChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="panel controls">
+            <h2>Controls</h2>
+            
+            <div class="control-group">
+                <h3>Priority Adjustment</h3>
+                <div id="priority-controls">
+                    <!-- Dynamically generated -->
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <h3>Create Event</h3>
+                <div>
+                    <select id="event-class">
+                        <option value="0">Ultra-critical</option>
+                        <option value="1">High-critical</option>
+                        <option value="2">Non-critical</option>
+                    </select>
+                    <input type="range" id="event-severity" min="1" max="5" step="0.5" value="2">
+                    <span id="severity-value">2.0x</span>
+                    <button onclick="createEvent()">Create Event</button>
+                </div>
+            </div>
+            
+            <div class="control-group">
+                <h3>Manual Allocation</h3>
+                <div id="allocation-controls">
+                    <!-- Dynamically generated -->
+                </div>
+                <button onclick="applyManualAllocation()">Apply Allocation</button>
+            </div>
+        </div>
+    </div>
+    
+    <div class="panel">
+        <h2>System Status</h2>
+        <pre id="status-display">Loading...</pre>
+    </div>
+
+    <script>
+        const socket = io();
+        let classes = [];
+        let config = {};
+        let allocationChart;
+        
+        // Initialize controls after data is received
+        function initControls() {
+            const priorityDiv = document.getElementById('priority-controls');
+            const allocationDiv = document.getElementById('allocation-controls');
+            
+            priorityDiv.innerHTML = '';
+            allocationDiv.innerHTML = '';
+            
+            classes.forEach((cls, idx) => {
+                // Priority controls
+                const priorityGroup = document.createElement('div');
+                priorityGroup.innerHTML = `
+                    <label>${cls.name}:</label>
+                    <input type="range" min="1" max="10" step="0.5" 
+                           value="${cls.priority}" 
+                           onchange="updatePriority(${idx}, this.value)">
+                    <span>${cls.priority}</span>
+                `;
+                priorityDiv.appendChild(priorityGroup);
+                
+                // Allocation controls
+                const allocGroup = document.createElement('div');
+                allocGroup.innerHTML = `
+                    <label>${cls.name}:</label>
+                    <input type="range" min="0" max="${config.network.total_bandwidth}" 
+                           value="0" id="alloc-${idx}">
+                    <span>0 Mbps</span>
+                `;
+                allocationDiv.appendChild(allocGroup);
+            });
+            
+            // Event severity slider
+            document.getElementById('event-severity').addEventListener('input', (e) => {
+                document.getElementById('severity-value').textContent = `${e.target.value}x`;
+            });
+        }
+        
+        // Initialize chart
+        function initChart() {
+            const ctx = document.getElementById('allocationChart').getContext('2d');
+            allocationChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: classes.map(c => c.name),
+                    datasets: [
+                        { 
+                            label: 'Allocation', 
+                            backgroundColor: 'rgba(54, 162, 235, 0.5)',
+                            data: []
+                        },
+                        { 
+                            label: 'Demand', 
+                            backgroundColor: 'rgba(255, 99, 132, 0.5)',
+                            data: []
+                        }
+                    ]
+                },
+                options: {
+                    scales: { 
+                        y: { 
+                            beginAtZero: true, 
+                            max: config.network.total_bandwidth,
+                            title: {
+                                display: true,
+                                text: 'Bandwidth (Mbps)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        
+        // Update priority
+        function updatePriority(classIdx, priority) {
+            fetch('/update_priority', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ class_idx: classIdx, priority: parseFloat(priority) })
+            });
+        }
+        
+        // Create event
+        function createEvent() {
+            const classIdx = document.getElementById('event-class').value;
+            const severity = document.getElementById('event-severity').value;
+            fetch('/create_event', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    class_idx: parseInt(classIdx), 
+                    severity: parseFloat(severity) 
+                })
+            });
+        }
+        
+        // Apply manual allocation
+        function applyManualAllocation() {
+            const allocations = [];
+            for (let i = 0; i < classes.length; i++) {
+                const value = parseFloat(document.getElementById(`alloc-${i}`).value);
+                allocations.push(value);
+            }
+            socket.emit('manual_allocate', { allocations });
+        }
+        
+        // Socket event listeners
+        socket.on('status_update', (data) => {
+            // Update status display
+            document.getElementById('status-display').textContent = 
+                JSON.stringify(data, null, 2);
+            
+            // Update chart
+            if (allocationChart) {
+                allocationChart.data.datasets[0].data = data.allocations;
+                allocationChart.data.datasets[1].data = data.demands;
+                allocationChart.update();
+            }
+        });
+        
+        socket.on('config_data', (data) => {
+            classes = data.classes;
+            config = data.config;
+            initControls();
+            initChart();
+        });
+        
+        // Request initial data
+        socket.emit('request_config');
+    </script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+network:
+  total_bandwidth: 100
+  classes:
+    - name: ultra-critical
+      min_bandwidth: 0
+      priority: 3
+      demand_range: [5, 40]
+    - name: high-critical
+      min_bandwidth: 0
+      priority: 2
+      demand_range: [10, 50]
+    - name: non-critical
+      min_bandwidth: 15
+      priority: 1
+      demand_range: [20, 60]
+
+training:
+  steps: 3000
+  learning_rate: 0.0005
+  batch_size: 128
+  memory_capacity: 10000
+  gamma: 0.99
+  eps_start: 1.0
+  eps_end: 0.01
+  eps_decay: 0.998
+  tau: 0.01
+
+dashboard:
+  host: localhost
+  port: 5000
+  refresh_interval: 1000  # ms
